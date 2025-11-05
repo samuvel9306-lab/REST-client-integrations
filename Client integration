@@ -1,0 +1,86 @@
+// server.js
+
+
+// In-memory rooms & players store for demo purpose
+const rooms = {}; // { roomId: { players: { socketId: {id, name, x, y, color} } } }
+
+
+function makePlayerObject(socket, name) {
+return {
+id: socket.id,
+name: name || 'Anon',
+x: Math.floor(Math.random() * 400) + 50,
+y: Math.floor(Math.random() * 300) + 50,
+color: '#'+Math.floor(Math.random()*16777215).toString(16)
+};
+}
+
+
+io.on('connection', (socket) => {
+console.log('socket connected', socket.id);
+
+
+socket.on('joinRoom', ({ roomId, name }) => {
+if (!roomId) roomId = 'default';
+socket.join(roomId);
+if (!rooms[roomId]) rooms[roomId] = { players: {} };
+
+
+const player = makePlayerObject(socket, name);
+rooms[roomId].players[socket.id] = player;
+
+
+// notify the joining socket with current state
+socket.emit('joined', { roomId, player, players: Object.values(rooms[roomId].players) });
+
+
+// broadcast to others in room that a new player joined
+socket.to(roomId).emit('playerJoined', player);
+
+
+// send updated player list
+io.in(roomId).emit('playersUpdate', Object.values(rooms[roomId].players));
+});
+
+
+socket.on('playerMove', ({ roomId, x, y }) => {
+const room = rooms[roomId];
+if (!room || !room.players[socket.id]) return;
+room.players[socket.id].x = x;
+room.players[socket.id].y = y;
+
+
+// broadcast only the player's new position to others
+socket.to(roomId).emit('playerMoved', { id: socket.id, x, y });
+});
+
+
+socket.on('chatMessage', ({ roomId, text }) => {
+if (!roomId) roomId = 'default';
+const sender = rooms[roomId] && rooms[roomId].players[socket.id];
+io.in(roomId).emit('chatMessage', { id: socket.id, name: sender ? sender.name : 'Anon', text });
+});
+
+
+socket.on('disconnecting', () => {
+const joinedRooms = Array.from(socket.rooms).filter(r => r !== socket.id);
+joinedRooms.forEach(roomId => {
+const room = rooms[roomId];
+if (room && room.players[socket.id]) {
+delete room.players[socket.id];
+socket.to(roomId).emit('playerLeft', { id: socket.id });
+io.in(roomId).emit('playersUpdate', Object.values(room.players));
+}
+});
+});
+
+
+socket.on('disconnect', () => {
+console.log('socket disconnected', socket.id);
+});
+});
+
+
+server.listen(PORT, () => {
+console.log(`Server running on http://localhost:${PORT}`);
+});
